@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Syntax & UI check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Python syntax
+        run: |
+          python -m py_compile onkyo_cast.py onkyo_web.py
+          python -m compileall -q .
+
+      - name: Import & API smoke test (no network)
+        run: |
+          python - <<'PY'
+          import onkyo_cast
+          import onkyo_web
+
+          for name in ("Eiscp", "Renderer", "start_http_server", "push_file"):
+              assert hasattr(onkyo_cast, name), name
+          for name in ("LiveEiscp", "StateStore", "discover_devices", "Handler", "build_html"):
+              assert hasattr(onkyo_web, name), name
+          print("imports ok")
+          PY
+
+      - name: HTML template placeholders replaced
+        run: |
+          python - <<'PY'
+          import onkyo_web
+
+          html = onkyo_web.build_html()
+          for token in ("__INPUTS__", "__MODES__", "__HDMI__", "__SLEEP__"):
+              assert token not in html, f"placeholder {token} not replaced"
+          assert "btnDiscover" in html and "tabBtnSettings" in html
+          print("html ok, len =", len(html))
+          PY
+
+      - name: JavaScript syntax (node --check)
+        run: |
+          python - <<'PY'
+          import pathlib
+          import re
+
+          import onkyo_web
+
+          script = re.search(r"<script>(.*?)</script>", onkyo_web.build_html(), re.S).group(1)
+          pathlib.Path("ui.js").write_text(script, encoding="utf-8")
+          print("extracted", len(script), "chars")
+          PY
+          node --check ui.js

@@ -1,5 +1,8 @@
 # Onkyo TX-NR616 Web Panel 🎛️
 
+[![CI](https://github.com/czopik/onkyo-tx-nr616-panel/actions/workflows/ci.yml/badge.svg)](https://github.com/czopik/onkyo-tx-nr616-panel/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 **Sterowanie amplitunerem Onkyo z przeglądarki** — pełny panel WWW (eISCP) z dodatkowym
 **castowaniem audio po DLNA** (amplituner jako renderer, jak Chromecast).
 
@@ -10,6 +13,25 @@ jest wspólny dla wielu amplitunerów Onkyo — panel powinien działać też na
 ![Zakładka Główne](docs/screenshot.png)
 
 ![Zakładka Ustawienia](docs/screenshot-settings.png)
+
+### English summary
+
+A web panel for Onkyo receivers (built and tested on **TX-NR616**, firmware 2012). It speaks
+the **eISCP** protocol (TCP 60128) and also makes the receiver a **DLNA cast target** — the unit
+is a DMR-1.50 renderer, so the panel pushes local audio files or stream URLs to it,
+Chromecast-style.
+
+- **Main tab**: power, volume, source tiles, now playing, DLNA cast
+- **Settings tab**: ONLINE/OFFLINE status, LAN discovery (SSDP + port 60128 scan), speaker levels
+  (subwoofer/center), tone, sleep, dimmer, display mode, HDMI out, zones 2/3, FM/AM tuner,
+  raw eISCP console
+- Python 3.8+, **standard library only**; also ships a Dockerfile / compose / Unraid template
+- No authentication — run it in a trusted LAN only
+
+Known limits of this model: front L/R and surround L/R levels are OSD-only; DLNA pause/seek are
+not implemented by the renderer; waking from standby needs `Network Standby = On` on the unit.
+
+Protocol notes: [docs/PROTOCOL.md](docs/PROTOCOL.md).
 
 ## Funkcje
 
