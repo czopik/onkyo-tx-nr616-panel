@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.1.1 — 2026-11-15
+
+- mini-strona cast (`onkyo_cast.py ui`): **suwak głośności 0–80 → 0–100**
+  (pełna skala `MVL`; poprzednio zakres 80–100 był nieosiągalny z tej strony)
+- wersje serwerów podniesione do `1.1.1` (`onkyo-cast`, `onkyo-cast-ui`, `onkyo-web`)
+
 ## v1.1 — 2026-11-15
 
 Wydanie „hardening + podkatalogi" (poprawki po przeglądzie zewnętrznym).

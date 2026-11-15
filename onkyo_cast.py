@@ -350,7 +350,7 @@ class Renderer:
 # ----------------------------------------------------------- HTTP server ----
 
 class MediaHandler(BaseHTTPRequestHandler):
-    server_version = "onkyo-cast/1.1"
+    server_version = "onkyo-cast/1.1.1"
     media_root = os.getcwd()
 
     def _serve(self, with_body=True):
@@ -626,7 +626,7 @@ UI_HTML = """<!doctype html>
     <p>
       <button onclick="api('/api/resume')">Play</button>
       <button class="sec" onclick="api('/api/stop')">Stop</button>
-      Głośność: <input type="range" id="vol" min="0" max="80" onchange="api('/api/volume?level='+this.value)">
+      Głośność: <input type="range" id="vol" min="0" max="100" onchange="api('/api/volume?level='+this.value)">
     </p>
     <small>Ten DMR nie obsługuje pauzy ani przewijania - jest Play i Stop.</small>
   </div>
@@ -724,7 +724,7 @@ def push_file(host, media_root, name, http_port):
 
 
 class UIHandler(BaseHTTPRequestHandler):
-    server_version = "onkyo-cast-ui/1.1"
+    server_version = "onkyo-cast-ui/1.1.1"
     host = DEFAULT_HOST
     media_root = os.getcwd()
     http_port = DEFAULT_HTTP_PORT

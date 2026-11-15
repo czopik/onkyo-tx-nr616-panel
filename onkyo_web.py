@@ -717,7 +717,7 @@ STATE = None
 
 # ----------------------------------------------------------------- HTTP -----
 class Handler(BaseHTTPRequestHandler):
-    server_version = "onkyo-web/1.1"
+    server_version = "onkyo-web/1.1.1"
 
     def _send(self, body, content_type="application/json; charset=utf-8", code=200):
         data = body.encode("utf-8") if isinstance(body, str) else body
