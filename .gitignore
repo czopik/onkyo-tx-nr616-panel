@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# konfiguracja lokalna
+config.json
+config/
+
+# pliki audio (nie wrzucamy muzyki do repo)
+media/*
+!media/.gitkeep
+
+# systemowe
+.DS_Store
+Thumbs.db
+*.log
+.env

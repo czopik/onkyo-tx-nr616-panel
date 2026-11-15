@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>onkyo-panel</Name>
+  <Repository>onkyo-panel:local</Repository>
+  <Registry/>
+  <Network>host</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support/>
+  <Project>https://github.com/czopik/onkyo-tx-nr616-panel</Project>
+  <Overview>Panel WWW do amplitunera Onkyo (eISCP) + cast DLNA. Strefy 1/2/3, glosnosc, zrodla, tryby, tony, tuner, dimmer, sleep, poziomy, wyszukiwanie urzadzenia, status online. Panel: http://IP:8770/  Serwer mediow: IP:8765</Overview>
+  <Category>HomeAutomation: Tools:</Category>
+  <WebUI>http://[IP]:[PORT:8770]/</WebUI>
+  <TemplateURL/>
+  <Icon/>
+  <ExtraParams/>
+  <PostArgs>--host 192.168.1.34 --media /media --ui-port 8770 --media-port 8765</PostArgs>
+  <CPUset/>
+  <DateInstalled>1763210000</DateInstalled>
+  <Config Name="Kod aplikacji" Target="/app" Default="/mnt/user/appdata/onkyo-panel" Mode="rw" Description="onkyo_web.py + onkyo_cast.py" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/onkyo-panel</Config>
+  <Config Name="Muzyka (DLNA)" Target="/media" Default="/mnt/user/appdata/onkyo-panel/media" Mode="ro" Description="Folder z plikami audio do castowania" Type="Path" Display="always" Required="false" Mask="false">/mnt/user/appdata/onkyo-panel/media</Config>
+  <Config Name="PYTHONUNBUFFERED" Target="PYTHONUNBUFFERED" Default="1" Mode="" Description="" Type="Variable" Display="advanced" Required="false" Mask="false">1</Config>
+</Container>
