@@ -188,7 +188,7 @@ def _describe(ip):
     try:
         with urllib.request.urlopen(f"http://{ip}/info.cgi", timeout=1.5) as response:
             page = response.read().decode("utf-8", "replace")
-        match = re.search(r"Machine Name</td>\s*<td[^>]*>([^<]+)<", page)
+        match = re.search(r"Machine Name\s*</td>\s*<td[^>]*>([^<]+)<", page)
         if match and "TX-" in match.group(1):
             name = match.group(1).strip()
             info.update({"model": name, "friendly": name, "manufacturer": "ONKYO"})
@@ -341,8 +341,13 @@ class LiveEiscp:
     def _connect(self):
         if self.sock is not None:
             return
-        self.sock = socket.create_connection((self.host, self.port), 3.0)
-        self.sock.settimeout(0.35)
+        sock = socket.create_connection((self.host, self.port), 3.0)
+        try:
+            sock.settimeout(0.35)
+        except OSError:
+            sock.close()
+            raise
+        self.sock = sock
         self.buffer = b""
 
     def close(self):
@@ -353,7 +358,7 @@ class LiveEiscp:
                 except OSError:
                     pass
                 self.sock = None
-                self.buffer = b""
+            self.buffer = b""
 
     def _drain(self):
         messages = []
@@ -393,6 +398,14 @@ class LiveEiscp:
             self.buffer += chunk
             messages.extend(self._drain())
         return messages
+
+    def listen(self, seconds=0.5):
+        """Pasywnie nasluchuje broadcastu eISCP z amplitunera."""
+        with self.lock:
+            self._connect()
+            if self.sock is None:
+                return []
+            return self._read(seconds)
 
     # -- API -------------------------------------------------------------
     def batch(self, codes):
@@ -480,8 +493,8 @@ class StateStore:
         self.link = LiveEiscp(host)
         self.cmd_link = LiveEiscp(host)
         self.lock = threading.RLock()
-        self.data = {"ok": False, "online": False, "host": host,
-                     "ts": time.time(), "last_seen": 0, "cast": {}, "files": []}
+        self.data = {"ok": False, "online": False, "host": host, "ts": time.time(),
+                     "last_seen": 0, "cast": {}, "files": []}
         self.renderer = None
         self.last_upnp = 0
         self.last_seen = 0
@@ -500,6 +513,7 @@ class StateStore:
         host = host.strip()
         if not re.fullmatch(r"[0-9A-Za-z\.\-]{3,64}", host):
             raise RuntimeError("nieprawidlowy adres")
+        files_list = self._files()
         with self.lock:
             self.host = host
             self.link.close()
@@ -511,10 +525,10 @@ class StateStore:
             self.last_seen = 0
             self.failures = 0
             self.last_upnp = 0
-            self.data = {"ok": False, "online": False, "host": host,
-                         "ts": time.time(), "last_seen": 0,
-                         "cast": {}, "files": self._files()}
-            save_config({"host": host})
+            self.cycle = 0
+            self.data = {"ok": False, "online": False, "host": host, "ts": time.time(),
+                         "last_seen": 0, "cast": {}, "files": files_list}
+        save_config({"host": host})
 
     def _apply(self, state, values):
         mapping = {"PWR": "power", "AMT": "mute", "SLI": "input", "LMD": "mode",
@@ -542,53 +556,48 @@ class StateStore:
                 z2[key] = values[code]
         state["z2"] = z2
         z3 = dict(state.get("z3") or {})
-        for code, key in (("PW3", "power"), ("VL3", "volume"), ("MT3", "mute"), ("SL3", "input")):
+        for code, key in (("PW3", "power"), ("VL3", "volume"),
+                          ("MT3", "mute"), ("SL3", "input")):
             if code in values:
                 z3[key] = values[code]
         state["z3"] = z3
 
     def _files(self):
         try:
-            return sorted(name for name in os.listdir(self.media_root)
-                          if os.path.splitext(name)[1].lower() in MIME)
+            found = []
+            for root_dir, _, filenames in os.walk(self.media_root):
+                for fname in filenames:
+                    if os.path.splitext(fname)[1].lower() in MIME:
+                        rel = os.path.relpath(os.path.join(root_dir, fname), self.media_root)
+                        found.append(rel.replace("\\", "/"))
+            return sorted(found)
         except OSError:
             return []
 
     def _build(self):
         start = time.time()
         self.cycle += 1
-        fast = self.link.batch(FAST_CODES)
-        full = {}
-        if self.cycle % 3 == 0 or "PWR" not in fast:
-            full = self.link.batch(FULL_CODES)
         values = {}
-        values.update(full)
-        values.update(fast)
-        online = bool(fast or full)
+        if self.cycle == 1 or self.failures > 0 or self.cycle % 15 == 0:
+            values.update(self.link.batch(FAST_CODES))
+            values.update(self.link.batch(FULL_CODES))
+        elif self.cycle % 4 == 0:
+            values.update(self.link.batch(FAST_CODES))
+        else:
+            for msg in self.link.listen(0.5):
+                code = msg[:3]
+                values[code] = msg[3:]
+
+        online = bool(values) or (self.link.sock is not None and self.failures == 0)
         if online:
             self.failures = 0
         else:
             self.failures = getattr(self, "failures", 0) + 1
-        with self.lock:
-            state = dict(self.data)
-        state["host"] = self.host
-        state["ts"] = time.time()
-        # pokazujemy OFFLINE dopiero po 3 nieudanych cyklach (~2 s), zeby nie migalo
-        state["online"] = online or self.failures < 3
-        state["ok"] = state["online"]
-        if online:
-            self.last_seen = time.time()
-        state["last_seen"] = self.last_seen
-        self._apply(state, values)
-        if "IFA" in values:
-            state["audio"] = None if values["IFA"] == "N/A" else values["IFA"]
+
+        # Operacje I/O (dysk oraz UPnP SOAP) wykonujemy POZA self.lock
+        files_list = self._files()
         now = time.time()
-        for field, (value, stamp) in list(self.recent.items()):
-            if stamp > start:
-                state[field] = value
-            if now - stamp > 6:
-                self.recent.pop(field, None)
-        state["files"] = self._files()
+        cast_update = None
         if now - self.last_upnp > 5:
             self.last_upnp = now
             if online:
@@ -596,15 +605,41 @@ class StateStore:
                     renderer = self._renderer()
                     transport, _ = renderer.transport_info()
                     position = renderer.position()
-                    state["cast"] = {"transport": transport, "rel": position["rel"],
-                                     "duration": position["duration"], "uri": position["uri"]}
+                    cast_update = {
+                        "transport": transport,
+                        "rel": position["rel"],
+                        "duration": position["duration"],
+                        "uri": position["uri"],
+                    }
                 except Exception:  # noqa: BLE001
-                    state["cast"] = {"transport": "?"}
+                    cast_update = {"transport": "?"}
             else:
-                state["cast"] = {"transport": "OFFLINE"}
-        else:
-            state["cast"] = state.get("cast") or {}
-        return state
+                cast_update = {"transport": "OFFLINE"}
+
+        with self.lock:
+            state = dict(self.data)
+            state["host"] = self.host
+            state["ts"] = now
+            # pokazujemy OFFLINE dopiero po 3 nieudanych cyklach (~2 s), zeby nie migalo
+            state["online"] = online or self.failures < 3
+            state["ok"] = state["online"]
+            if online:
+                self.last_seen = now
+            state["last_seen"] = self.last_seen
+            self._apply(state, values)
+            if "IFA" in values:
+                state["audio"] = None if values["IFA"] == "N/A" else values["IFA"]
+            for field, (value, stamp) in list(self.recent.items()):
+                if stamp > start:
+                    state[field] = value
+                if now - stamp > 6:
+                    self.recent.pop(field, None)
+            state["files"] = files_list
+            if cast_update is not None:
+                state["cast"] = cast_update
+            else:
+                state["cast"] = state.get("cast") or {}
+            return state
 
     def update_cast(self, info):
         with self.lock:
@@ -645,6 +680,8 @@ class StateStore:
             state = dict(self.data)
             before = {field: state.get(field) for field in PROTECTED_FIELDS}
             self._apply(state, values)
+            if "IFA" in values:
+                state["audio"] = None if values["IFA"] == "N/A" else values["IFA"]
             stamp = time.time()
             for field in PROTECTED_FIELDS:
                 if state.get(field) != before.get(field):
@@ -663,11 +700,12 @@ class StateStore:
                 with self.lock:
                     self.data = state
             except Exception:  # noqa: BLE001
+                files_list = self._files()
                 with self.lock:
                     self.data = {"ok": False, "online": False, "host": self.host,
                                  "ts": time.time(), "last_seen": self.last_seen,
-                                 "cast": {}, "files": self._files()}
-            time.sleep(0.8)
+                                 "cast": {}, "files": files_list}
+            time.sleep(0.4)
 
     def snapshot(self):
         with self.lock:
@@ -679,7 +717,7 @@ STATE = None
 
 # ----------------------------------------------------------------- HTTP -----
 class Handler(BaseHTTPRequestHandler):
-    server_version = "onkyo-web/1.0"
+    server_version = "onkyo-web/1.1"
 
     def _send(self, body, content_type="application/json; charset=utf-8", code=200):
         data = body.encode("utf-8") if isinstance(body, str) else body
@@ -691,7 +729,8 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def _json(self, payload, code=200):
-        self._send(json.dumps(payload, ensure_ascii=False), "application/json; charset=utf-8", code)
+        self._send(json.dumps(payload, ensure_ascii=False),
+                   "application/json; charset=utf-8", code)
 
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
@@ -779,8 +818,7 @@ class Handler(BaseHTTPRequestHandler):
                 STATE._renderer().stop()
             except Exception as exc:  # noqa: BLE001
                 raise RuntimeError(f"amplituner nieosiągalny ({exc})") from exc
-            STATE.update_cast({"transport": "STOPPED", "rel": "00:00:00",
-                               "duration": "", "uri": ""})
+            STATE.update_cast({"transport": "STOPPED", "rel": "00:00:00", "duration": "", "uri": ""})
             return {"ok": True}
         if path == "/api/cast/refresh":
             state = STATE.snapshot()
@@ -1363,9 +1401,9 @@ def main():
     server = ThreadingHTTPServer((args.bind, args.ui_port), Handler)
     server.daemon_threads = True
     ip = local_ip_towards(args.host)
-    print(f"Amplituner:   {args.host}")
-    print(f"Panel:        http://127.0.0.1:{args.ui_port}/   (w sieci: http://{ip}:{args.ui_port}/)")
-    print(f"Pliki (DLNA): http://{ip}:{args.media_port}/   folder: {MEDIA_ROOT}")
+    print(f"Amplituner: {args.host}")
+    print(f"Panel: http://127.0.0.1:{args.ui_port}/ (w sieci: http://{ip}:{args.ui_port}/)")
+    print(f"Pliki (DLNA): http://{ip}:{args.media_port}/ folder: {MEDIA_ROOT}")
     print("Ctrl+C aby zatrzymac.")
     try:
         server.serve_forever()
@@ -1374,6 +1412,7 @@ def main():
     finally:
         server.server_close()
         STATE.link.close()
+        STATE.cmd_link.close()
 
 
 if __name__ == "__main__":

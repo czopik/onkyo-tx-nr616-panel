@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
 onkyo_cast.py - "cast" audio to an Onkyo TX-NR616 (DLNA Digital Media Renderer)
-just like you would to a Chromecast, but using the receiver's built-in
-UPnP/DLNA DMR interface + eISCP control protocol.
+just like you would to a Chromecast, but using the receiver's built-in UPnP/DLNA
+DMR interface + eISCP control protocol.
 
-No hacking, no firmware modification: the receiver already accepts pushed
-streams. This script serves a local file (or a URL) and pushes it to the DMR.
+No hacking, no firmware modification: the receiver already accepts pushed streams.
+This script serves a local file (or a URL) and pushes it to the DMR.
 
 Usage examples:
   python onkyo_cast.py status
@@ -17,8 +17,9 @@ Usage examples:
   python onkyo_cast.py mute on
   python onkyo_cast.py input NET
 
-Verified on TX-NR616 (firmware 2012): SetAVTransportURI + Play + Stop work;
-Pause and Seek are NOT implemented by this DMR (UPnP returns an error).
+Verified on TX-NR616 (firmware 2012):
+  SetAVTransportURI + Play + Stop work; Pause and Seek are NOT implemented by
+  this DMR (UPnP returns an error).
 
 Requires Python 3.8+ (standard library only).
 """
@@ -86,8 +87,9 @@ MIME = {
 
 
 # ---------------------------------------------------------------- eISCP ----
+
 class Eiscp:
-    """Minimal eISCP client (send '!1<CMD>\\r\\n', parse replies)."""
+    """Minimal eISCP client (send '!1<CMD>\r\n', parse replies)."""
 
     def __init__(self, host, port=EISCP_PORT, timeout=3.0):
         self.host, self.port, self.timeout = host, port, timeout
@@ -191,12 +193,13 @@ class Eiscp:
 
 
 # ------------------------------------------------------------------ UPnP ----
-def soap(host, control_url, service, action, args_xml="", timeout=10.0):
+
+def soap(host, control_url, service, action, args_xml="", timeout=3.0):
     body = (
-        '<?xml version="1.0"?>'
+        '<?xml version="1.0" encoding="utf-8"?>'
         '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" '
         's:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">'
-        f"<s:Body><u:{action} xmlns:u=\"{service}\">{args_xml}</u:{action}></s:Body>"
+        f'<s:Body><u:{action} xmlns:u="{service}">{args_xml}</u:{action}></s:Body>'
         "</s:Envelope>"
     ).encode("utf-8")
     request = urllib.request.Request(
@@ -235,7 +238,7 @@ class Renderer:
     def _discover(self):
         try:
             with urllib.request.urlopen(
-                f"http://{self.host}:{UPNP_PORT}/upnp_descriptor_0", timeout=6
+                f"http://{self.host}:{UPNP_PORT}/upnp_descriptor_0", timeout=4
             ) as response:
                 xml = response.read().decode("utf-8", "replace")
             for block in re.findall(r"<service>(.*?)</service>", xml, re.S):
@@ -255,12 +258,12 @@ class Renderer:
         if "AVTransport" not in self.controls:
             self.controls["AVTransport"] = "/upnp_control_2"
 
-    def call(self, service, action, args_xml=""):
+    def call(self, service, action, args_xml="", timeout=3.0):
         urn = SERVICES[service]
         url = self.controls.get(service)
         if not url:
             raise RuntimeError(f"service {service} not found on renderer")
-        return soap(self.host, url, urn, action, args_xml)
+        return soap(self.host, url, urn, action, args_xml, timeout=timeout)
 
     # --- convenience wrappers -------------------------------------------
     def set_uri(self, uri, title, mime):
@@ -268,7 +271,7 @@ class Renderer:
             '<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" '
             'xmlns:dc="http://purl.org/dc/elements/1.1/" '
             'xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">'
-            '<item id="1" parentID="0" restricted="1">'
+            '<item id="0" parentID="-1" restricted="1">'
             f"<dc:title>{escape(title)}</dc:title>"
             "<upnp:class>object.item.audioItem.musicTrack</upnp:class>"
             f'<res protocolInfo="http-get:*:{mime}:*">{escape(uri)}</res>'
@@ -286,7 +289,7 @@ class Renderer:
             '<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" '
             'xmlns:dc="http://purl.org/dc/elements/1.1/" '
             'xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">'
-            '<item id="2" parentID="0" restricted="1">'
+            '<item id="0" parentID="-1" restricted="1">'
             f"<dc:title>{escape(title)}</dc:title>"
             "<upnp:class>object.item.audioItem.musicTrack</upnp:class>"
             f'<res protocolInfo="http-get:*:{mime}:*">{escape(uri)}</res>'
@@ -311,11 +314,12 @@ class Renderer:
         return self.call("AVTransport", "Stop", "<InstanceID>0</InstanceID>")
 
     def seek(self, seconds):
+        target = time.strftime("%H:%M:%S", time.gmtime(max(0, int(seconds))))
         return self.call(
             "AVTransport",
             "Seek",
             "<InstanceID>0</InstanceID><Unit>REL_TIME</Unit>"
-            f"<Target>{int(seconds)}</Target>",
+            f"<Target>{target}</Target>",
         )
 
     def transport_info(self):
@@ -344,37 +348,50 @@ class Renderer:
 
 
 # ----------------------------------------------------------- HTTP server ----
+
 class MediaHandler(BaseHTTPRequestHandler):
-    server_version = "onkyo-cast/1.0"
+    server_version = "onkyo-cast/1.1"
     media_root = os.getcwd()
 
     def _serve(self, with_body=True):
         raw_path = urllib.parse.urlparse(self.path).path
         rel = urllib.parse.unquote(raw_path).lstrip("/")
-        full = os.path.normpath(os.path.join(self.media_root, rel))
-        if not full.startswith(os.path.normpath(self.media_root)):
+        root = os.path.realpath(self.media_root)
+        full = os.path.realpath(os.path.join(root, rel))
+        try:
+            if os.path.commonpath([root, full]) != root:
+                self.send_error(403)
+                return
+        except ValueError:
             self.send_error(403)
             return
         if not os.path.isfile(full):
             print(f"[http] {self.client_address[0]} 404 {raw_path}")
             self.send_error(404)
             return
-
         size = os.path.getsize(full)
-        mime = mimetypes.guess_type(full)[0] or "application/octet-stream"
+        mime = MIME.get(os.path.splitext(full)[1].lower()) or mimetypes.guess_type(full)[0] or "application/octet-stream"
         rng = self.headers.get("Range")
         start, end = 0, size - 1
         if rng and rng.startswith("bytes="):
-            first, _, last = rng[6:].partition("-")
-            if first:
-                start = int(first)
-            if last:
-                end = min(int(last), size - 1)
-            if start > end:
-                start, end = 0, size - 1
-                rng = None
+            try:
+                spec = rng[6:].split(",")[0].strip()
+                first, _, last = spec.partition("-")
+                if first:
+                    start = int(first)
+                if last:
+                    end = min(int(last), size - 1)
+                if start > end or start < 0 or start >= size:
+                    self.send_response(416)
+                    self.send_header("Content-Range", f"bytes */{size}")
+                    self.end_headers()
+                    return
+            except ValueError:
+                self.send_response(416)
+                self.send_header("Content-Range", f"bytes */{size}")
+                self.end_headers()
+                return
         length = end - start + 1
-
         self.send_response(206 if rng else 200)
         self.send_header("Content-Type", mime)
         self.send_header("Accept-Ranges", "bytes")
@@ -431,6 +448,7 @@ _server = None
 
 
 # --------------------------------------------------------------- commands ----
+
 def cmd_status(args):
     rx = Eiscp(args.host)
     print(f"Host: {args.host}")
@@ -442,34 +460,33 @@ def cmd_status(args):
     listening = values.get("LMD")
     audio = values.get("IFA")
     hdmi_out = values.get("HDO")
-
-    print(f"  power        : {'ON' if power and power.endswith('1') else power}")
+    print(f"  power      : {'ON' if power and power.endswith('1') else power}")
     if volume is not None and re.fullmatch(r"[0-9A-F]{2}", volume):
-        print(f"  volume       : {int(volume, 16)}/100  (raw MVL {volume})")
+        print(f"  volume     : {int(volume, 16)}/100 (raw MVL {volume})")
     else:
-        print(f"  volume       : {volume}")
-    print(f"  mute         : {mute}")
-    print(f"  input (SLI)  : {source}")
-    print(f"  listening    : {listening}")
-    print(f"  hdmi out     : {hdmi_out}")
-    print(f"  audio info   : {audio}")
+        print(f"  volume     : {volume}")
+    print(f"  mute       : {mute}")
+    print(f"  input (SLI): {source}")
+    print(f"  listening  : {listening}")
+    print(f"  hdmi out   : {hdmi_out}")
+    print(f"  audio info : {audio}")
     try:
         renderer = Renderer(args.host)
         state, status = renderer.transport_info()
         position = renderer.position()
-        print(f"  transport    : {state} / {status}")
-        print(f"  position     : {position['rel']} / {position['duration']}")
+        print(f"  transport  : {state} / {status}")
+        print(f"  position   : {position['rel']} / {position['duration']}")
         if position["uri"]:
-            print(f"  current uri  : {position['uri']}")
-        print(f"  upnp volume  : {renderer.volume()}")
+            print(f"  current uri: {position['uri']}")
+        print(f"  upnp volume: {renderer.volume()}")
     except Exception as exc:  # noqa: BLE001
-        print(f"  transport    : (UPnP error: {exc})")
+        print(f"  transport  : (UPnP error: {exc})")
 
 
 def _push(args, uri, title, mime):
     renderer = Renderer(args.host)
     print(f"Casting: {title}")
-    print(f"         {uri}")
+    print(f"  {uri}")
     renderer.set_uri(uri, title, mime)
     renderer.play(1)
     time.sleep(0.8)
@@ -486,10 +503,8 @@ def cmd_play(args):
         # must be captured BEFORE casting, the renderer switches input by itself
         previous_input = Eiscp(args.host).query("SLI")
     if is_url:
-        mime = MIME.get(os.path.splitext(urllib.parse.urlparse(target).path)[1].lower(),
-                        "audio/mpeg")
-        renderer = _push(args, target, os.path.basename(urllib.parse.urlparse(target).path)
-                         or "stream", mime)
+        mime = MIME.get(os.path.splitext(urllib.parse.urlparse(target).path)[1].lower(), "audio/mpeg")
+        renderer = _push(args, target, os.path.basename(urllib.parse.urlparse(target).path) or "stream", mime)
     else:
         full = os.path.abspath(target)
         if not os.path.isfile(full):
@@ -499,11 +514,9 @@ def cmd_play(args):
         ip = local_ip_towards(args.host)
         name = os.path.basename(full)
         uri = f"http://{ip}:{args.port}/{urllib.parse.quote(name)}"
-        mime = MIME.get(os.path.splitext(name)[1].lower(),
-                        mimetypes.guess_type(name)[0] or "audio/mpeg")
+        mime = MIME.get(os.path.splitext(name)[1].lower(), mimetypes.guess_type(name)[0] or "audio/mpeg")
         print(f"Serving {media_root} at http://{ip}:{args.port}/")
         renderer = _push(args, uri, name, mime)
-
     started = time.time()
     try:
         while True:
@@ -591,66 +604,66 @@ def cmd_power(args):
 
 
 # ------------------------------------------------------------- web UI ----
+
 UI_HTML = """<!doctype html>
 <html lang="pl">
 <head>
 <meta charset="utf-8">
 <title>Onkyo TX-NR616 - cast</title>
 <style>
- body{font-family:system-ui,Segoe UI,sans-serif;background:#101318;color:#e8e8e8;margin:0;padding:24px}
- h1{font-size:18px;font-weight:600;margin:0 0 10px}
- .bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:14px 0}
- button{background:#2a3140;color:#e8e8e8;border:1px solid #3c4558;border-radius:6px;padding:8px 14px;cursor:pointer;font-size:14px}
- button:hover{background:#364055}
- #status{font-family:ui-monospace,Consolas,monospace;font-size:13px;color:#9fb2cc;white-space:pre-wrap;background:#171c24;border-radius:8px;padding:12px}
- ul{list-style:none;padding:0;margin:0}
- li{padding:5px 0;display:flex;gap:10px;align-items:center}
- .muted{color:#7f8a9b;font-size:12px}
- input[type=range]{width:240px;vertical-align:middle}
+  body { font-family: system-ui, sans-serif; background: #121418; color: #e2e8f0; max-width: 720px; margin: 24px auto; padding: 0 16px; }
+  .card { background: #1e2229; border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  button { background: #3b82f6; color: #fff; border: 0; border-radius: 6px; padding: 8px 14px; cursor: pointer; margin-right: 6px; }
+  button.sec { background: #334155; }
+  ul { list-style: none; padding: 0; }
+  li { padding: 6px 0; border-bottom: 1px solid #2d333f; display: flex; justify-content: space-between; align-items: center; }
 </style>
 </head>
 <body>
-<h1>Onkyo TX-NR616 &mdash; cast</h1>
-<div id="status">laczenie...</div>
-<div class="bar">
-  <button onclick="act('resume')">Play</button>
-  <button onclick="act('stop')">Stop</button>
-  <label>Glosnosc <input id="vol" type="range" min="0" max="100" step="1" value="0"></label>
-</div>
-<p class="muted">Ten DMR nie obsluguje pauzy ani przewijania - jest Play i Stop.</p>
-<h2 style="font-size:14px;margin:20px 0 8px">Pliki w folderze</h2>
-<ul id="files"></ul>
-<p class="muted">Pliki serwuje ten komputer (port %%MEDIA_PORT%%). CLI: python onkyo_cast.py play plik.flac</p>
+  <h1>Onkyo TX-NR616 — cast</h1>
+  <div class="card">
+    <div id="info">łączenie...</div>
+    <p>
+      <button onclick="api('/api/resume')">Play</button>
+      <button class="sec" onclick="api('/api/stop')">Stop</button>
+      Głośność: <input type="range" id="vol" min="0" max="80" onchange="api('/api/volume?level='+this.value)">
+    </p>
+    <small>Ten DMR nie obsługuje pauzy ani przewijania - jest Play i Stop.</small>
+  </div>
+  <div class="card">
+    <h2>Pliki w folderze</h2>
+    <ul id="files"></ul>
+    <small>Pliki serwuje ten komputer (port %%MEDIA_PORT%%). CLI: python onkyo_cast.py play plik.flac</small>
+  </div>
 <script>
-async function api(p){const r=await fetch(p);return await r.json();}
-function show(s){
-  const lines=[
-    'power     : '+(s.power||'-')+(s.mute==='01'?'  (MUTE)':''),
-    'input     : '+(s.input||'-'),
-    'transport : '+(s.transport||'-')+'    '+(s.rel||'--')+' / '+(s.duration||'--'),
-    'audio     : '+(s.audio||'-'),
-    'uri       : '+(s.uri||'-')];
-  document.getElementById('status').textContent=lines.join('\n');
-  if(s.volume!==undefined && s.volume!==null) document.getElementById('vol').value=s.volume;
-  const ul=document.getElementById('files');
-  if(s.files){
-    ul.innerHTML='';
-    s.files.forEach(function(f){
-      const li=document.createElement('li');
-      const b=document.createElement('button'); b.textContent='Cast';
-      b.onclick=function(){cast(f);};
-      const sp=document.createElement('span'); sp.textContent=f;
-      li.appendChild(b); li.appendChild(sp); ul.appendChild(li);
-    });
-  }
+async function api(url) {
+  const r = await fetch(url);
+  const d = await r.json();
+  render(d);
 }
-async function refresh(){try{show(await api('/api/status'));}catch(e){}}
-async function act(a){const s=await api('/api/'+a); if(s.ok===false){alert(s.error);} show(s);}
-async function cast(f){const s=await api('/api/play?file='+encodeURIComponent(f)); if(s.ok===false){alert(s.error);} show(s);}
-document.getElementById('vol').onchange=async function(e){show(await api('/api/volume?level='+e.target.value));};
-refresh();setInterval(refresh,2000);
+function render(d) {
+  if (!d || d.ok === false) return;
+  document.getElementById('info').textContent =
+    `Host: ${d.host} | PWR: ${d.power} | Vol: ${d.volume ?? '?'} | Transport: ${d.transport ?? '?'} (${d.rel ?? ''}/${d.duration ?? ''})`;
+  if (d.volume != null) document.getElementById('vol').value = d.volume;
+  const ul = document.getElementById('files');
+  ul.innerHTML = '';
+  (d.files || []).forEach(f => {
+    const li = document.createElement('li');
+    const span = document.createElement('span');
+    span.textContent = f;
+    const btn = document.createElement('button');
+    btn.textContent = 'Cast';
+    btn.onclick = () => api('/api/play?file=' + encodeURIComponent(f));
+    li.append(span, btn);
+    ul.appendChild(li);
+  });
+}
+setInterval(() => api('/api/status'), 2500);
+api('/api/status');
 </script>
-</body></html>"""
+</body>
+</html>"""
 
 
 def build_status(host, media_root):
@@ -680,32 +693,38 @@ def build_status(host, media_root):
         pass
     try:
         extensions = tuple(MIME)
-        status["files"] = sorted(
-            name for name in os.listdir(media_root)
-            if os.path.splitext(name)[1].lower() in extensions
-        )
+        found = []
+        for root_dir, _, filenames in os.walk(media_root):
+            for fname in filenames:
+                if os.path.splitext(fname)[1].lower() in extensions:
+                    rel_path = os.path.relpath(os.path.join(root_dir, fname), media_root)
+                    found.append(rel_path.replace("\\", "/"))
+        status["files"] = sorted(found)
     except OSError:
         pass
     return status
 
 
 def push_file(host, media_root, name, http_port):
-    root = os.path.normpath(media_root)
-    full = os.path.normpath(os.path.join(root, name))
-    if not full.startswith(root) or not os.path.isfile(full):
-        raise RuntimeError(f"file not found: {name}")
+    root = os.path.realpath(media_root)
+    full = os.path.realpath(os.path.join(root, name))
+    try:
+        if os.path.commonpath([root, full]) != root or not os.path.isfile(full):
+            raise RuntimeError(f"file not found: {name}")
+    except ValueError as exc:
+        raise RuntimeError(f"invalid file path: {name}") from exc
     start_http_server(root, "0.0.0.0", http_port)
     ip = local_ip_towards(host)
-    uri = f"http://{ip}:{http_port}/{urllib.parse.quote(name)}"
-    mime = MIME.get(os.path.splitext(name)[1].lower(),
-                    mimetypes.guess_type(name)[0] or "audio/mpeg")
+    rel_posix = os.path.relpath(full, root).replace("\\", "/")
+    uri = f"http://{ip}:{http_port}/{urllib.parse.quote(rel_posix, safe='/')}"
+    mime = MIME.get(os.path.splitext(full)[1].lower(), mimetypes.guess_type(full)[0] or "audio/mpeg")
     renderer = Renderer(host)
-    renderer.set_uri(uri, name, mime)
+    renderer.set_uri(uri, os.path.basename(full), mime)
     renderer.play(1)
 
 
 class UIHandler(BaseHTTPRequestHandler):
-    server_version = "onkyo-cast-ui/1.0"
+    server_version = "onkyo-cast-ui/1.1"
     host = DEFAULT_HOST
     media_root = os.getcwd()
     http_port = DEFAULT_HTTP_PORT
@@ -719,16 +738,14 @@ class UIHandler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def _json(self, payload):
-        self._send(json.dumps(payload, ensure_ascii=False),
-                   "application/json; charset=utf-8")
+        self._send(json.dumps(payload, ensure_ascii=False), "application/json; charset=utf-8")
 
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         query = urllib.parse.parse_qs(parsed.query)
         try:
             if parsed.path in ("/", "/index.html"):
-                self._send(UI_HTML.replace("%%MEDIA_PORT%%", str(self.http_port)),
-                           "text/html; charset=utf-8")
+                self._send(UI_HTML.replace("%%MEDIA_PORT%%", str(self.http_port)), "text/html; charset=utf-8")
             elif parsed.path == "/api/status":
                 self._json(build_status(self.host, self.media_root))
             elif parsed.path == "/api/play":
@@ -762,15 +779,13 @@ def cmd_ui(args):
     if not os.path.isdir(media_root):
         sys.exit(f"Not a folder: {media_root}")
     start_http_server(media_root, args.bind, args.port)
-    handler = type("UIBound", (UIHandler,),
-                   {"host": args.host, "media_root": media_root,
-                    "http_port": args.port})
+    handler = type("UIBound", (UIHandler,), {"host": args.host, "media_root": media_root, "http_port": args.port})
     server = ThreadingHTTPServer((args.bind, args.ui_port), handler)
     server.daemon_threads = True
     ip = local_ip_towards(args.host)
     print(f"Media folder : {media_root}")
     print(f"Media server : http://{ip}:{args.port}/")
-    print(f"Web UI       : http://127.0.0.1:{args.ui_port}/   (also http://{ip}:{args.ui_port}/)")
+    print(f"Web UI       : http://127.0.0.1:{args.ui_port}/ (also http://{ip}:{args.ui_port}/)")
     print("Ctrl+C to stop.")
     try:
         server.serve_forever()

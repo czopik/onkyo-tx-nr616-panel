@@ -1,5 +1,40 @@
 # Changelog
 
+## v1.1 — 2026-11-15
+
+Wydanie „hardening + podkatalogi" (poprawki po przeglądzie zewnętrznym).
+
+### Bezpieczeństwo serwera mediów (`onkyo_cast.py`)
+
+- **ochrona przed Path Traversal**: zamiast `startswith()` używamy
+  `os.path.realpath()` + `os.path.commonpath()` — nie da się wyjść poza katalog mediów
+  przez `..%2f` ani przez bliźniacze nazwy katalogów (`media2/`)
+- **walidacja nagłówka `Range`**: błędne/nieparsowalne zakresy i zakresy poza plikiem
+  zwracają **HTTP 416** z `Content-Range: bytes */rozmiar`; poprawne dalej dają 206
+
+### Podkatalogi i cast
+
+- **rekurencyjne listowanie mediów** (`os.walk`) w panelu i w mini-stronie cast
+- cast plików z zagnieżdżonych folderów (`Artysta/Album/utwór.flac`) — w `push_file()`
+  zachowujemy ukośniki (`quote(..., safe='/')`), a walidacja ścieżki jest wspólna z serwerem
+- poprawny MIME z rozszerzenia (m.in. `.flac`, `.m4a`) także dla plików w podkatalogach
+
+### Wydajność i stabilność (`onkyo_web.py`)
+
+- **I/O poza sekcją krytyczną**: listowanie plików i zapytania SOAP UPnP wykonują się
+  przed `with self.lock:`, więc wątek WWW nie czeka na dysk/SOAP
+- **timeout SOAP** skrócony z 10 s do **3 s** (szybszy powrót przy zerwaniu połączenia)
+- **hybrydowy poller**: naprzemiennie pasywny nasłuch ramek rozgłaszanych przez amplituner
+  (`listen(0.5)`) i rzadsze zapytania kontrolne (`batch()`), pełny odświeżacz co ~15 cykli
+- `IFA` (informacja o sygnale) dodane do szybkiego odpytywania; uwzględniane też w `patch()`
+- drobne utwardzenia: `_connect()` zamyka gniazdo przy błędzie `settimeout`,
+  zamknięcie `cmd_link` przy wyjściu, bardziej tolerancyjny regex nazwy modelu w discovery
+
+### Inne
+
+- wersje serwerów podniesione do `1.1`
+- odświeżona mini-strona `onkyo_cast.py ui` (cast z przeglądarki)
+
 ## v1.0 — 2026-11-15
 
 Pierwsze publiczne wydanie. Zbudowane i przetestowane na żywo na Onkyo TX-NR616

@@ -26,6 +26,8 @@ Chromecast-style.
   (subwoofer/center), tone, sleep, dimmer, display mode, HDMI out, zones 2/3, FM/AM tuner,
   raw eISCP console
 - Python 3.8+, **standard library only**; also ships a Dockerfile / compose / Unraid template
+- Hardened media server: path-traversal protection, HTTP 416 for unsatisfiable ranges,
+  recursive media folders (cast from `Artist/Album/track.flac`)
 - No authentication — run it in a trusted LAN only
 
 Known limits of this model: front L/R and surround L/R levels are OSD-only; DLNA pause/seek are
@@ -40,7 +42,8 @@ Protocol notes: [docs/PROTOCOL.md](docs/PROTOCOL.md).
 - głośność 0–100 (suwak reaguje natychmiast + krok ±)
 - **kafle źródeł** (tylko realne wejścia modelu: BD/DVD, CBL/SAT, STB/DVR, GAME, PC, AUX, AM, FM, TV/CD, NET, USB)
 - „Teraz gra": format, kanały, tryb nasłuchu, Cinema Filter
-- **Cast DLNA**: pliki z folderu + dowolny URL strumienia
+- **Cast DLNA**: pliki z folderu (także z podkatalogów, np. `Artysta/Album/utwór.flac`)
+  + dowolny URL strumienia
 
 **Zakładka „Ustawienia"**
 - status **ONLINE/OFFLINE** + czas ostatniej odpowiedzi
@@ -173,6 +176,13 @@ docs/PROTOCOL.md     # notatki protokołu eISCP/DLNA
 Panel (jak i sam amplituner) **nie ma uwierzytelniania** — każdy w LAN może sterować.
 Uruchamiaj go tylko w zaufanej sieci; jeśli chcesz wystawić go dalej, postaw reverse proxy
 z hasłem (np. SWAG) albo ustaw `--bind 127.0.0.1`.
+
+Serwer plików mediów ma natomiast utwardzoną obsługę ścieżek:
+
+- **ochrona przed Path Traversal** (`realpath` + `commonpath`) — nie da się pobrać pliku
+  spoza katalogu mediów przez `..%2f` ani przez katalogi o podobnej nazwie,
+- **walidacja `Range`** — niepoprawne zakresy kończą się `HTTP 416` z `Content-Range`,
+  co chroni przed dziwnymi żądaniami odtwarzaczy/klientów DLNA.
 
 ## Licencja
 
